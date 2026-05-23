@@ -33,7 +33,7 @@ CREATE TABLE issued_books (
     isbn VARCHAR(50) NOT NULL,
     title VARCHAR(200) NOT NULL,
     user_id INTEGER NOT NULL,
-    issued_date DATE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    issued_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     return_date DATE
 );
 
