@@ -173,8 +173,11 @@ def test_admin_login_invalid_credentials(driver):
     Admin login with wrong password shows the error message and
     does NOT redirect to /admin_dashboard.
     """
-    # Use deliberately wrong credentials
-    login_as_admin(driver, username="wrong_admin", password="wrong_password")
+    # Use deliberately wrong credentials.
+    # expect_success=False tells the helper NOT to wait for a dashboard redirect
+    # (which would never happen) — it returns right after submitting the form.
+    login_as_admin(driver, username="wrong_admin", password="wrong_password",
+                   expect_success=False)
 
     # Should still be on /admin_login (not redirected)
     assert "/admin_login" in driver.current_url, (
@@ -232,7 +235,11 @@ def test_user_login_invalid_credentials(driver):
     User login with wrong credentials shows the error message and
     does NOT redirect to /user_dashboard.
     """
-    login_as_user(driver, username="no_such_user", password="wrong_pass")
+    # Use deliberately wrong credentials.
+    # expect_success=False tells the helper NOT to wait for a dashboard redirect
+    # (which would never happen) — it returns right after submitting the form.
+    login_as_user(driver, username="no_such_user", password="wrong_pass",
+                  expect_success=False)
 
     # Should still be on /user_login
     assert "/user_login" in driver.current_url, (

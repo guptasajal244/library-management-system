@@ -104,19 +104,25 @@ def go_to(driver, path):
 #        → lands on /admin_dashboard
 # ─────────────────────────────────────────────────────────────────────────────
 
-def login_as_admin(driver, username=ADMIN_USERNAME, password=ADMIN_PASSWORD):
+def login_as_admin(driver, username=ADMIN_USERNAME, password=ADMIN_PASSWORD,
+                   expect_success=True):
     """
     Performs a complete admin login sequence starting from the landing page.
 
     Parameters
     ----------
-    driver   : active WebDriver instance
-    username : admin username (defaults to ADMIN_USERNAME constant above)
-    password : admin password (defaults to ADMIN_PASSWORD constant above)
+    driver         : active WebDriver instance
+    username       : admin username (defaults to ADMIN_USERNAME constant above)
+    password       : admin password (defaults to ADMIN_PASSWORD constant above)
+    expect_success : if True (default), waits for the /admin_dashboard redirect
+                     after form submission — use for valid-credential tests.
+                     if False, returns immediately after clicking Submit so the
+                     caller can inspect the login page error state — use for
+                     invalid-credential tests.
 
     Returns
     -------
-    None  — after this call, the browser is on /admin_dashboard
+    None
     """
     # Step 1: Go to landing page
     go_to(driver, "/")
@@ -139,8 +145,11 @@ def login_as_admin(driver, username=ADMIN_USERNAME, password=ADMIN_PASSWORD):
     # Step 6: Submit the form
     driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
 
-    # Step 7: Confirm we reached the dashboard
-    wait.until(EC.url_contains("/admin_dashboard"))
+    # Step 7: Only wait for the dashboard redirect when valid credentials are used.
+    # Invalid-credential tests set expect_success=False and assert the error state
+    # themselves — skipping this wait prevents a TimeoutException in those tests.
+    if expect_success:
+        wait.until(EC.url_contains("/admin_dashboard"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -150,19 +159,25 @@ def login_as_admin(driver, username=ADMIN_USERNAME, password=ADMIN_PASSWORD):
 #        → lands on /user_dashboard
 # ─────────────────────────────────────────────────────────────────────────────
 
-def login_as_user(driver, username=USER_USERNAME, password=USER_PASSWORD):
+def login_as_user(driver, username=USER_USERNAME, password=USER_PASSWORD,
+                  expect_success=True):
     """
     Performs a complete user login sequence starting from the landing page.
 
     Parameters
     ----------
-    driver   : active WebDriver instance
-    username : user username (defaults to USER_USERNAME constant above)
-    password : user password (defaults to USER_PASSWORD constant above)
+    driver         : active WebDriver instance
+    username       : user username (defaults to USER_USERNAME constant above)
+    password       : user password (defaults to USER_PASSWORD constant above)
+    expect_success : if True (default), waits for the /user_dashboard redirect
+                     after form submission — use for valid-credential tests.
+                     if False, returns immediately after clicking Submit so the
+                     caller can inspect the login page error state — use for
+                     invalid-credential tests.
 
     Returns
     -------
-    None  — after this call, the browser is on /user_dashboard
+    None
     """
     # Step 1: Go to landing page
     go_to(driver, "/")
@@ -185,8 +200,11 @@ def login_as_user(driver, username=USER_USERNAME, password=USER_PASSWORD):
     # Step 6: Submit
     driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
 
-    # Step 7: Confirm we reached the user dashboard
-    wait.until(EC.url_contains("/user_dashboard"))
+    # Step 7: Only wait for the dashboard redirect when valid credentials are used.
+    # Invalid-credential tests set expect_success=False and assert the error state
+    # themselves — skipping this wait prevents a TimeoutException in those tests.
+    if expect_success:
+        wait.until(EC.url_contains("/user_dashboard"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
