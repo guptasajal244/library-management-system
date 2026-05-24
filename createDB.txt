@@ -45,9 +45,20 @@ CREATE TABLE orders (
     orderDate DATE NOT NULL
 );
 
-# and then insert value into admin for login.
+# Insert the admin account.
+# IMPORTANT: The password column must store a werkzeug hash, NOT plaintext.
+# Storing plaintext will permanently break login because the app uses
+# check_password_hash(), which only accepts werkzeug-format hashes.
+#
+# Generate the correct hash first (run in your terminal):
+#   python -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('your_password'))"
+#
+# Then paste the output into the INSERT below:
+#
+# INSERT INTO admin (username, password)
+# VALUES ('admin', '<paste_hash_here>');
+#
+# Alternatively, run this one-liner which does it all automatically:
+#   python -c "import pymysql; from werkzeug.security import generate_password_hash; c=pymysql.connect(host='localhost',user='root',password='root',database='library'); cur=c.cursor(); cur.execute('INSERT INTO admin (username, password) VALUES (%s, %s)', ('admin', generate_password_hash('admin'))); c.commit(); c.close(); print('Admin created.')"
 
-INSERT INTO admin (username, password)
-VALUES ('admin', 'admin');
-
-# for user login add user details through admin interface.
+# for user login, add user details through the admin interface (Add User page).

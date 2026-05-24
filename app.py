@@ -1,16 +1,30 @@
+import os
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user, login_required
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from datetime import datetime, timedelta
 from sqlalchemy import or_
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'library_management_system'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:root@localhost/library'
+# Fix C-3: Read SECRET_KEY from environment; fall back only for local dev.
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'library_management_system_dev_only')
+# Fix C-1: Read DB credentials from environment; fall back only for local dev.
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
+    'DATABASE_URL',
+    'mysql+pymysql://root:root@localhost/library'
+)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+# Fix C-2: Recycle idle connections before MySQL's wait_timeout; pre-ping
+# validates each connection before checkout, preventing "server has gone away".
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_recycle': 280,
+    'pool_pre_ping': True,
+    'pool_size': 5,
+    'max_overflow': 10,
+}
 
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
@@ -46,7 +60,8 @@ class IssuedBooks(db.Model):
     isbn = db.Column(db.String(50), nullable=False)
     title = db.Column(db.String(200), nullable=False)
     user_id = db.Column(db.Integer, nullable=False)
-    issued_date = db.Column(db.Date, default=datetime.utcnow, nullable=False)
+    # Fix Q-3: Schema uses TIMESTAMP; DateTime matches the actual column type.
+    issued_date = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     return_date = db.Column(db.Date, nullable=False)
 
 class Orders(db.Model):
@@ -60,9 +75,15 @@ class Orders(db.Model):
 # Admin sessions carry an "a" prefix (e.g. "a1") set by Admin.get_id().
 @login_manager.user_loader
 def load_user(user_id):
-    if str(user_id).startswith('a'):
-        return Admin.query.get(int(str(user_id)[1:]))
-    return User.query.get(int(user_id))
+    # Fix R-5: Catch OperationalError when MySQL is unreachable; return None
+    # so Flask-Login treats the session as anonymous instead of raising a 500.
+    # Fix Q-1: db.session.get() replaces the SQLAlchemy-2.0-removed Query.get().
+    try:
+        if str(user_id).startswith('a'):
+            return db.session.get(Admin, int(str(user_id)[1:]))
+        return db.session.get(User, int(user_id))
+    except OperationalError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +93,16 @@ def admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not isinstance(current_user, Admin):
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# Fix R-1, R-2: Restrict issue/return routes to authenticated User sessions.
+# An Admin session has no `issued_books` field; accessing it causes AttributeError.
+def user_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not isinstance(current_user, User):
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
@@ -104,7 +135,9 @@ def admin_login():
         else:
             invalid_credentials = True
 
-    return render_template('admin_login.html', invalid_credentials=invalid_credentials)
+    # Fix R-6: Return 401 when credentials were submitted but failed.
+    status = 401 if invalid_credentials else 200
+    return render_template('admin_login.html', invalid_credentials=invalid_credentials), status
 
 @app.route('/user_login', methods=['GET', 'POST'])
 def user_login():
@@ -123,7 +156,9 @@ def user_login():
         else:
             invalid_credentials = True
 
-    return render_template('user_login.html', invalid_credentials=invalid_credentials)
+    # Fix R-6: Return 401 when credentials were submitted but failed.
+    status = 401 if invalid_credentials else 200
+    return render_template('user_login.html', invalid_credentials=invalid_credentials), status
 
 @app.route('/logout')
 def logout():
@@ -201,8 +236,14 @@ def add_book():
             # Create a new book object and add it to the database
             new_book = Book(isbn=isbn, title=title, author=author, genre=genre, quantity=quantity)
             db.session.add(new_book)
-            db.session.commit()
-            success_message = 'Book added successfully!'
+            # Fix T-3: The pre-check above is a TOCTOU race; a concurrent insert
+            # of the same ISBN will raise IntegrityError here — handle it explicitly.
+            try:
+                db.session.commit()
+                success_message = 'Book added successfully!'
+            except IntegrityError:
+                db.session.rollback()
+                success_message = 'Error: A book with this ISBN already exists.'
 
     return render_template('add_book.html', success_message=success_message)
 
@@ -214,9 +255,12 @@ def search():
 
 @app.route('/issue_book/<isbn>', methods=['POST'])
 @login_required
+@user_required  # Fix R-1: Block Admin sessions; Admin has no issued_books field.
 def issue_book(isbn):
 
-    book = Book.query.filter_by(isbn=isbn).first()
+    # Fix R-4: with_for_update() acquires a row-level lock, preventing two
+    # concurrent requests from both reading quantity > 0 and both decrementing it.
+    book = Book.query.filter_by(isbn=isbn).with_for_update().first()
 
     # Check if the user has already issued a copy of the same book
     existing_issue = IssuedBooks.query.filter_by(user_id=current_user.id, isbn=isbn).first()
@@ -247,8 +291,13 @@ def issue_book(isbn):
         # Decrement the book quantity and save to the database
         book.quantity -= 1
 
-        # Commit all changes to the database
-        db.session.commit()
+        # Fix T-1: Commit all changes; roll back explicitly on any DB error so the
+        # session stays clean and in-memory state does not drift from the database.
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return jsonify({'success': False, 'message': 'Database error. Please try again.'})
 
         return jsonify({'success': True, 'message': 'Book issued successfully!'})
     elif existing_issue:
@@ -265,6 +314,7 @@ def issued_books():
 
 @app.route('/return_book')
 @login_required
+@user_required  # Fix R-2: Block Admin sessions; Admin has no issued_books field.
 def return_book():
     # Get the books issued by the current user
     issued_books = IssuedBooks.query.filter_by(user_id=current_user.id).all()
@@ -273,6 +323,7 @@ def return_book():
 
 @app.route('/return_book/<isbn>', methods=['POST'])
 @login_required
+@user_required  # Fix R-2: Block Admin sessions.
 def handle_return_book(isbn):
     book = Book.query.filter_by(isbn=isbn).first()
 
@@ -282,14 +333,18 @@ def handle_return_book(isbn):
     if book and issued_book:
         db.session.delete(issued_book)
 
-        # Update the User table's issued_books field
-        current_user.issued_books -= 1
+        # Fix R-3: Guard against the counter going below zero due to data drift.
+        current_user.issued_books = max(0, current_user.issued_books - 1)
 
         # Increment the book quantity and save to the database
         book.quantity += 1
 
-        # Commit all changes to the database
-        db.session.commit()
+        # Fix T-2: Explicit rollback on commit failure keeps the session clean.
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return jsonify({'success': False, 'message': 'Database error. Please try again.'})
 
         return jsonify({'success': True, 'message': 'Book returned successfully!'})
     else:
@@ -320,9 +375,13 @@ def place_order():
         # If no similar order found, proceed with placing the order
         new_order = Orders(userId=current_user.id, Author=author_name, BookName=book_title)
         db.session.add(new_order)
-        db.session.commit()
-
-        success_message = 'Order placed successfully!'
+        # Fix T-4: Guard the commit so any DB error returns a user-facing message.
+        try:
+            db.session.commit()
+            success_message = 'Order placed successfully!'
+        except Exception:
+            db.session.rollback()
+            success_message = 'Failed to place order. Please try again.'
         return render_template('place_order.html', message=success_message)
 
     return render_template('place_order.html')
@@ -336,4 +395,12 @@ def view_orders():
     return render_template('view_orders.html', orders=orders)
 
 if __name__ == '__main__':
+    # Fix C-4: Probe the DB at startup so a missing MySQL instance produces a
+    # clear warning rather than a silent 500 on the first DB-touching request.
+    try:
+        with app.app_context():
+            db.session.execute(db.text('SELECT 1'))
+    except Exception as e:
+        print(f"[WARNING] Cannot connect to MySQL at startup: {e}")
+        print("[WARNING] The app will start, but all database routes will fail until MySQL is reachable.")
     app.run(debug=True)
