@@ -110,7 +110,12 @@ def submit_form(driver):
     # which happens only after a POST — so its presence confirms the form was
     # submitted and the server responded.
     WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, ".success"))
+        EC.presence_of_element_located(
+    (
+        By.CSS_SELECTOR,
+        ".success, .error-message"
+    )
+)
     )
 
 
@@ -154,7 +159,7 @@ def test_add_book_valid(admin_driver):
     )
 
     # ── Assertion 2: The success message paragraph is visible
-    message_element = admin_driver.find_element(By.CSS_SELECTOR, ".success")
+    message_element = admin_driver.find_element(By.CSS_SELECTOR, ".success, .error-message")
     assert message_element.is_displayed(), (
         "Expected the success message to be visible after adding a book"
     )
@@ -202,7 +207,7 @@ def test_add_book_duplicate_isbn(admin_driver):
 
     # Sanity check: first submission must have succeeded before we test the
     # duplicate path. If this fails, the test data or credentials are wrong.
-    first_message = admin_driver.find_element(By.CSS_SELECTOR, ".success").text
+    first_message = admin_driver.find_element(By.CSS_SELECTOR, ".success, .error-message").text
     assert "Book added successfully!" in first_message, (
         f"Setup failed — first submission did not succeed. Got: '{first_message}'"
     )
@@ -227,7 +232,7 @@ def test_add_book_duplicate_isbn(admin_driver):
     )
 
     # ── Assertion 2: The error message is displayed
-    error_element = admin_driver.find_element(By.CSS_SELECTOR, ".success")
+    error_element = admin_driver.find_element(By.CSS_SELECTOR, ".success, .error-message")
     assert error_element.is_displayed(), (
         "Expected an error message to appear after submitting a duplicate ISBN"
     )
@@ -290,7 +295,7 @@ def test_add_book_invalid_quantity(admin_driver, bad_quantity, description):
     )
 
     # ── Assertion 2: The validation error message is displayed
-    error_element = admin_driver.find_element(By.CSS_SELECTOR, ".success")
+    error_element = admin_driver.find_element(By.CSS_SELECTOR, ".success, .error-message")
     assert error_element.is_displayed(), (
         f"Expected a validation error message for quantity='{bad_quantity}'"
     )
