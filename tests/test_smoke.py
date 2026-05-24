@@ -54,20 +54,27 @@ def test_landing_page_loads(driver):
     """
     go_to(driver, "/")
 
+    # Wait until the page title is set before asserting on it.
+    # Without this, driver.title can return '' while Chrome is still
+    # rendering — causing a false failure even though the page is correct.
+    WebDriverWait(driver, 10).until(EC.title_contains("Library Management System"))
+
     # Page title should say "Library Management System"
     assert "Library Management System" in driver.title, (
         f"Expected page title to contain 'Library Management System', got: '{driver.title}'"
     )
 
     # The login type dropdown must be present
-    dropdown = driver.find_element(By.ID, "loginType")
+    dropdown = WebDriverWait(driver, 10).until(
+        EC.visibility_of_element_located((By.ID, "loginType"))
+    )
     assert dropdown.is_displayed(), "Login type dropdown is not visible on the landing page"
 
     # The submit button must be present
     submit_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
     assert submit_btn.is_displayed(), "Submit button is not visible on the landing page"
 
-    print("\n✅ Landing page loaded successfully")
+    print("\n[PASS] Landing page loaded successfully")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -98,7 +105,7 @@ def test_landing_page_admin_redirect(driver):
     # The admin username input must be visible
     assert driver.find_element(By.ID, "adminUsername").is_displayed()
 
-    print("\n✅ Admin redirect from landing page works")
+    print("\n[PASS] Admin redirect from landing page works")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -129,7 +136,7 @@ def test_landing_page_user_redirect(driver):
     # The user username input must be visible
     assert driver.find_element(By.ID, "userUsername").is_displayed()
 
-    print("\n✅ User redirect from landing page works")
+    print("\n[PASS] User redirect from landing page works")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -159,7 +166,7 @@ def test_admin_login_valid_credentials(driver):
         f"Unexpected heading on admin dashboard: '{heading.text}'"
     )
 
-    print(f"\n✅ Admin login succeeded — on: {driver.current_url}")
+    print(f"\n[PASS] Admin login succeeded - on: {driver.current_url}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -191,7 +198,7 @@ def test_admin_login_invalid_credentials(driver):
         f"Expected 'Invalid' in error text, got: '{error_msg.text}'"
     )
 
-    print(f"\n✅ Admin login correctly rejected invalid credentials")
+    print("\n[PASS] Admin login correctly rejected invalid credentials")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -221,7 +228,7 @@ def test_user_login_valid_credentials(driver):
         f"Unexpected heading on user dashboard: '{heading.text}'"
     )
 
-    print(f"\n✅ User login succeeded — on: {driver.current_url}")
+    print(f"\n[PASS] User login succeeded - on: {driver.current_url}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -253,7 +260,7 @@ def test_user_login_invalid_credentials(driver):
         f"Expected 'Invalid' in error text, got: '{error_msg.text}'"
     )
 
-    print(f"\n✅ User login correctly rejected invalid credentials")
+    print(f"\n[PASS] User login correctly rejected invalid credentials")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -283,7 +290,7 @@ def test_admin_logout(admin_driver):
     dropdown = admin_driver.find_element(By.ID, "loginType")
     assert dropdown.is_displayed(), "After logout, expected to see the login dropdown"
 
-    print(f"\n✅ Admin logout works — returned to: {admin_driver.current_url}")
+    print(f"\n[PASS] Admin logout works - returned to: {admin_driver.current_url}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -313,4 +320,4 @@ def test_user_logout(user_driver):
     f"Expected redirect to /login after logout, got: {user_driver.current_url}"
 )
 
-    print(f"\n✅ User logout works — returned to: {user_driver.current_url}")
+    print(f"\n[PASS] User logout works - returned to: {user_driver.current_url}")

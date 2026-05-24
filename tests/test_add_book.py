@@ -170,7 +170,7 @@ def test_add_book_valid(admin_driver):
         f"Unexpected message text: '{message_element.text}'"
     )
 
-    print(f"\n✅ Book added successfully with ISBN: {unique_isbn}")
+    print(f"\n[PASS] Book added successfully with ISBN: {unique_isbn}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -243,7 +243,7 @@ def test_add_book_duplicate_isbn(admin_driver):
         f"Expected duplicate-ISBN error, got: '{error_element.text}'"
     )
 
-    print(f"\n✅ Duplicate ISBN correctly rejected for ISBN: {duplicate_isbn}")
+    print(f"\n[PASS] Duplicate ISBN correctly rejected - ISBN: {duplicate_isbn}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -307,4 +307,4 @@ def test_add_book_invalid_quantity(admin_driver, bad_quantity, description):
         f"'{error_element.text}'"
     )
 
-    print(f"\n✅ Invalid quantity '{bad_quantity}' ({description}) correctly rejected")
+    print(f"\n[PASS] Invalid quantity '{bad_quantity}' ({description}) correctly rejected")
