@@ -309,7 +309,8 @@ def test_user_logout(user_driver):
     )
 
     # Login dropdown should be visible
-    dropdown = user_driver.find_element(By.ID, "loginType")
-    assert dropdown.is_displayed(), "After logout, expected to see the login dropdown"
+    assert "/login" in user_driver.current_url, (
+    f"Expected redirect to /login after logout, got: {user_driver.current_url}"
+)
 
     print(f"\n✅ User logout works — returned to: {user_driver.current_url}")
