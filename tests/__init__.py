@@ -1,0 +1,3 @@
+# This file makes the tests/ directory a Python package.
+# Required so test files can import helpers from conftest.py using:
+#   from tests.conftest import go_to, login_as_admin, ...
