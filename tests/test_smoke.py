@@ -277,17 +277,23 @@ def test_admin_logout(admin_driver):
     a browser that is already logged in as Admin.
     """
     # admin_driver is already on /admin_dashboard
-    # Find and click the Logout link
-    logout_link = admin_driver.find_element(By.CSS_SELECTOR, "a[href*='logout']")
+    # Wait for the logout link to be clickable (not just present) before clicking.
+    # In headless mode the dashboard may still be rendering when we look for it.
+    wait = WebDriverWait(admin_driver, 10)
+    logout_link = wait.until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, "a[href*='logout']"))
+    )
     logout_link.click()
 
     # Should be back on the landing page (/ or /login)
-    WebDriverWait(admin_driver, 10).until(
-        lambda d: "/login" in d.current_url or d.current_url.endswith("/")
+    WebDriverWait(admin_driver, 15).until(
+        lambda d: "/login" in d.current_url or d.current_url.rstrip("/").endswith(":5000")
     )
 
     # The login type dropdown should be visible again (we're back at landing)
-    dropdown = admin_driver.find_element(By.ID, "loginType")
+    dropdown = WebDriverWait(admin_driver, 10).until(
+        EC.visibility_of_element_located((By.ID, "loginType"))
+    )
     assert dropdown.is_displayed(), "After logout, expected to see the login dropdown"
 
     print(f"\n[PASS] Admin logout works - returned to: {admin_driver.current_url}")
@@ -307,17 +313,25 @@ def test_user_logout(user_driver):
     a browser that is already logged in as a User.
     """
     # user_driver is already on /user_dashboard
-    logout_link = user_driver.find_element(By.CSS_SELECTOR, "a[href*='logout']")
+    # Wait for the logout link to be clickable (not just present) before clicking.
+    # In headless mode the dashboard may still be rendering when we look for it.
+    wait = WebDriverWait(user_driver, 10)
+    logout_link = wait.until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, "a[href*='logout']"))
+    )
     logout_link.click()
 
-    # Should be back on the landing page
-    WebDriverWait(user_driver, 10).until(
-        lambda d: "/login" in d.current_url or d.current_url.endswith("/")
+    # Should be back on the landing page (/login or /)
+    WebDriverWait(user_driver, 15).until(
+        lambda d: "/login" in d.current_url or d.current_url.rstrip("/").endswith(":5000")
     )
 
-    # Login dropdown should be visible
-    assert "/login" in user_driver.current_url, (
-    f"Expected redirect to /login after logout, got: {user_driver.current_url}"
-)
+    # Login dropdown should be visible — confirms landing page fully rendered
+    dropdown = WebDriverWait(user_driver, 10).until(
+        EC.visibility_of_element_located((By.ID, "loginType"))
+    )
+    assert dropdown.is_displayed(), (
+        f"Expected redirect to login page after logout, got: {user_driver.current_url}"
+    )
 
     print(f"\n[PASS] User logout works - returned to: {user_driver.current_url}")

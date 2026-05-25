@@ -59,8 +59,18 @@ def driver():
 
     options = webdriver.ChromeOptions()
 
-    # ── Uncomment the line below to run headless (no visible browser window)
-    # options.add_argument("--headless=new")
+    # Enable headless mode if running in CI (GitHub Actions) or if HEADLESS env var is set
+    import os
+    if os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("HEADLESS") == "true":
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--window-size=1920,1080")
+        # Prevent headless Chrome from suppressing alerts when page navigations
+        # race with pending window.alert() calls.
+        options.add_argument("--disable-popup-blocking")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-backgrounding-occluded-windows")
 
     # Suppress Chrome's "DevTools listening" console noise
     options.add_experimental_option("excludeSwitches", ["enable-logging"])
@@ -78,6 +88,13 @@ def driver():
     browser.maximize_window()
 
     yield browser  # hand the browser to the test
+
+    # Best-effort alert cleanup: if a test crashes while an alert is open,
+    # dismiss it so browser.quit() does not hang on Windows.
+    try:
+        browser.switch_to.alert.dismiss()
+    except Exception:
+        pass
 
     browser.quit()  # always close after the test, even if it failed
 
@@ -208,11 +225,94 @@ def login_as_user(driver, username=USER_USERNAME, password=USER_PASSWORD,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HELPER: dismiss a browser alert and return its text
-# Used by issue_book and return_book tests (AJAX + window.alert flow)
+# HELPER: JavaScript alert() interceptor (primary AJAX alert strategy)
+#
+# How the headless Chrome "suppressed dialog" bug occurs:
+#   1. AJAX call completes → script.js calls window.alert()
+#   2. Selenium waits for the native dialog via alert_is_present()
+#   3. BUT: if Chrome’s modal stack is not fully empty from any prior
+#      navigation or dialog, it silently drops the new alert() call and
+#      logs: "window.alert() dialog was suppressed because another
+#             browser modal dialog was already showing"
+#   4. accept_alert() times out waiting for a dialog that was never shown.
+#
+# The only 100%-reliable fix is to prevent a native dialog from being
+# created in the first place. We do this by overriding window.alert()
+# with a JavaScript shim BEFORE clicking the button. The shim stores the
+# message in a JS variable instead of opening a dialog. No native modal
+# → nothing to suppress → Selenium polls the variable instead.
 # ─────────────────────────────────────────────────────────────────────────────
 
-def accept_alert(driver, timeout=10):
+def intercept_next_alert(driver):
+    """
+    Injects a JavaScript shim that overrides window.alert() on the current
+    page BEFORE the action that will trigger it.
+
+    Instead of opening a native browser dialog (which headless Chrome can
+    silently suppress), the shim records the alert message in sessionStorage.
+
+    WHY sessionStorage instead of window variables:
+    -----------------------------------------------
+    When a successful issue/return fires window.alert() followed immediately
+    by location.reload(), the page reloads BEFORE Python's polling loop
+    (get_intercepted_alert) can read window.__alertFired. The reload wipes
+    all window-level variables. sessionStorage survives same-origin reloads,
+    so the captured message is still readable from the new page's context.
+
+    Keys written:
+        __alertFired = '1'             set when alert() is called
+        __alertText  = '<message>'     the exact string passed to alert()
+
+    After calling this, trigger the button click, then call
+    get_intercepted_alert(driver) to retrieve the captured message.
+
+    Parameters
+    ----------
+    driver : active WebDriver instance (must already be on the target page)
+    """
+    driver.execute_script("""
+        sessionStorage.removeItem('__alertFired');
+        sessionStorage.removeItem('__alertText');
+        window.alert = function(message) {
+            sessionStorage.setItem('__alertText',  message);
+            sessionStorage.setItem('__alertFired', '1');
+        };
+    """)
+
+
+def get_intercepted_alert(driver, timeout=15):
+    """
+    Waits for the JS alert shim (installed by intercept_next_alert) to
+    capture a message via sessionStorage, then returns that message.
+
+    sessionStorage persists across location.reload() within the same tab,
+    so this works regardless of whether the page reloaded before polling
+    began. Polls every 500ms via WebDriverWait.
+
+    Parameters
+    ----------
+    driver  : active WebDriver instance
+    timeout : max seconds to wait for the alert to fire (default 15)
+
+    Returns
+    -------
+    str — the message that was passed to window.alert()
+    """
+    WebDriverWait(driver, timeout).until(
+        lambda d: d.execute_script(
+            "return sessionStorage.getItem('__alertFired') === '1';"
+        )
+    )
+    text = driver.execute_script("return sessionStorage.getItem('__alertText');") or ""
+    # Clean up so stale values don’t bleed into the next interceptor call
+    driver.execute_script("""
+        sessionStorage.removeItem('__alertFired');
+        sessionStorage.removeItem('__alertText');
+    """)
+    return text
+
+
+def accept_alert(driver, timeout=15):
     """
     Waits for a native browser alert to appear, captures its message,
     and dismisses it by clicking OK.
@@ -221,10 +321,16 @@ def accept_alert(driver, timeout=10):
     after the AJAX call completes. Selenium blocks all further interactions
     until the alert is handled.
 
+    Headless Chrome can suppress window.alert() with the console warning:
+      "window.alert() dialog was suppressed because another browser modal
+       dialog was already showing"
+    To prevent this, we always confirm the alert is fully gone and the page
+    is back to a stable document.readyState before returning.
+
     Parameters
     ----------
     driver  : active WebDriver instance
-    timeout : max seconds to wait for the alert (default 10)
+    timeout : max seconds to wait for the alert (default 15)
 
     Returns
     -------
@@ -234,7 +340,46 @@ def accept_alert(driver, timeout=10):
     alert = wait.until(EC.alert_is_present())
     text = alert.text
     alert.accept()
+    # Wait until the alert dialog is completely dismissed.
+    # This is critical in headless Chrome: if we proceed while the alert is
+    # still in the browser's modal stack, the *next* alert gets suppressed.
+    wait.until_not(EC.alert_is_present())
     return text
+
+
+def wait_for_page_ready(driver, timeout=15):
+    """
+    Waits until the browser's document.readyState is 'complete'.
+
+    Call this after accept_alert() when a success path triggers location.reload().
+    Without this synchronization, find_element() calls can race against the
+    ongoing page load and produce StaleElementReference or NoSuchElement errors.
+
+    Parameters
+    ----------
+    driver  : active WebDriver instance
+    timeout : max seconds to wait (default 15)
+    """
+    WebDriverWait(driver, timeout).until(
+        lambda d: d.execute_script("return document.readyState") == "complete"
+    )
+
+
+def dismiss_any_stray_alert(driver):
+    """
+    Silently dismisses any alert that may be open without raising an exception.
+
+    Used in test teardown and before starting new interactions to prevent
+    the "dialog already showing" suppression in headless Chrome.
+
+    Parameters
+    ----------
+    driver : active WebDriver instance
+    """
+    try:
+        driver.switch_to.alert.dismiss()
+    except Exception:
+        pass  # No alert present — that's fine
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -267,5 +412,9 @@ def user_driver(driver):
             # user_driver is on /user_dashboard, ready to use
     """
     login_as_user(driver)
+    # Wait for the dashboard to be fully rendered before handing control
+    # to the test. In headless mode the page can be structurally loaded
+    # (URL matches) before all JS and DOM elements are interactive.
+    wait_for_page_ready(driver)
     yield driver
     # driver.quit() is handled by the parent `driver` fixture

@@ -301,8 +301,10 @@ def issue_book(isbn):
 
         return jsonify({'success': True, 'message': 'Book issued successfully!'})
     elif existing_issue:
+        db.session.rollback()  # Release the row-level lock immediately
         return jsonify({'success': False, 'message': 'You have already issued a copy of this book.'})
     else:
+        db.session.rollback()  # Release the row-level lock immediately
         return jsonify({'success': False, 'message': 'Failed to issue the book. Insufficient quantity.'})
 
 @app.route('/issued_books')
